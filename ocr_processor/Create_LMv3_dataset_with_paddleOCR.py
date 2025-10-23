@@ -64,12 +64,15 @@ class Config:
     USE_GPU = False
     
     # Procesamiento
-    MAX_IMAGES = 10  # None = todas, o número específico para testing
+    MAX_IMAGES = None  # None = todas, o número específico para testing
     BATCH_SIZE = 50  # Guardar progreso cada N imágenes
+    AUTO_SAVE = True  # Guardar automáticamente cada BATCH_SIZE imágenes
     
     # Salida
-    OUTPUT_DIR = Path("label_studio_data")
+    OUTPUT_DIR = Path(__file__).parent / "label_studio_data"
     OUTPUT_JSON = "recibos_label_studio.json"
+    PROCESSED_IMAGES_LOG = "processed_images.json"  # Registro de imágenes procesadas
+    INCREMENTAL_MODE = True  # Activar modo incremental
     
     # Scopes
     SCOPES = [
@@ -355,11 +358,47 @@ class LabelStudioDatasetGenerator:
         
         self.drive = GoogleDriveImageReader(credentials)
         self.ocr_processor = PaddleOCRProcessor(config)
+        
+        # Cargar imágenes ya procesadas
+        self.processed_images = self._cargar_registro_procesadas()
+    
+    def _cargar_registro_procesadas(self) -> set:
+        """Carga el registro de imágenes ya procesadas"""
+        log_file = self.config.OUTPUT_DIR / self.config.PROCESSED_IMAGES_LOG
+        
+        if not self.config.INCREMENTAL_MODE or not log_file.exists():
+            return set()
+        
+        try:
+            with open(log_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return set(data.get('processed_image_ids', []))
+        except Exception as e:
+            print(f"⚠️  No se pudo cargar el registro de procesadas: {e}")
+            return set()
+    
+    def _guardar_registro_procesadas(self, image_ids: set):
+        """Guarda el registro de imágenes procesadas"""
+        log_file = self.config.OUTPUT_DIR / self.config.PROCESSED_IMAGES_LOG
+        
+        try:
+            data = {
+                'processed_image_ids': list(image_ids),
+                'last_updated': datetime.now().isoformat(),
+                'total_count': len(image_ids)
+            }
+            with open(log_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"⚠️  No se pudo guardar el registro: {e}")
     
     def generar_dataset(self) -> List[Dict]:
         """Genera dataset completo para Label Studio"""
         print("="*70)
         print("GENERANDO DATASET PARA LABEL STUDIO")
+        if self.config.INCREMENTAL_MODE:
+            print("🔄 MODO INCREMENTAL ACTIVADO")
+            print(f"   📋 Imágenes ya procesadas: {len(self.processed_images)}")
         print("="*70 + "\n")
         
         # Encontrar carpeta de imágenes
@@ -382,6 +421,8 @@ class LabelStudioDatasetGenerator:
         
         label_studio_tasks = []
         total_imagenes = 0
+        imagenes_saltadas = 0
+        nuevas_procesadas = set()
         
         # Procesar cada mes
         for idx_mes, carpeta_mes in enumerate(carpetas_meses, 1):
@@ -411,6 +452,11 @@ class LabelStudioDatasetGenerator:
                 
                 # Procesar cada imagen
                 for idx_img, imagen in enumerate(imagenes, 1):
+                    # Verificar si ya fue procesada
+                    if self.config.INCREMENTAL_MODE and imagen['id'] in self.processed_images:
+                        imagenes_saltadas += 1
+                        continue
+                    
                     if self.config.MAX_IMAGES and total_imagenes >= self.config.MAX_IMAGES:
                         print(f"\n⚠️  Límite de {self.config.MAX_IMAGES} imágenes alcanzado")
                         break
@@ -432,14 +478,19 @@ class LabelStudioDatasetGenerator:
                     task['meta']['carpeta_numero'] = num_nombre
                     
                     label_studio_tasks.append(task)
+                    nuevas_procesadas.add(imagen['id'])
                     total_imagenes += 1
                     
                     num_detections = task['meta'].get('num_detections', 0)
                     print(f"✅ {num_detections} detecciones")
                     
-                    # Guardar progreso
-                    if total_imagenes % self.config.BATCH_SIZE == 0:
-                        self._guardar_progreso(label_studio_tasks, total_imagenes)
+                    # Guardar progreso automático cada BATCH_SIZE
+                    if self.config.AUTO_SAVE and total_imagenes % self.config.BATCH_SIZE == 0:
+                        self._guardar_progreso_completo(
+                            label_studio_tasks, 
+                            nuevas_procesadas,
+                            total_imagenes
+                        )
                 
                 if self.config.MAX_IMAGES and total_imagenes >= self.config.MAX_IMAGES:
                     break
@@ -450,36 +501,98 @@ class LabelStudioDatasetGenerator:
         print(f"\n{'='*70}")
         print("PROCESAMIENTO COMPLETADO")
         print(f"{'='*70}")
-        print(f"📊 Total de imágenes procesadas: {total_imagenes}")
+        print(f"📊 Total de imágenes NUEVAS procesadas: {total_imagenes}")
+        if self.config.INCREMENTAL_MODE:
+            print(f"⏭️  Imágenes saltadas (ya procesadas): {imagenes_saltadas}")
         print(f"📄 Total de tareas generadas: {len(label_studio_tasks)}")
         print(f"{'='*70}\n")
+        
+        # Actualizar registro de procesadas (guardado final)
+        if self.config.INCREMENTAL_MODE:
+            self.processed_images.update(nuevas_procesadas)
+            self._guardar_registro_procesadas(self.processed_images)
+            print(f"📝 Registro actualizado: {len(self.processed_images)} imágenes totales")
         
         return label_studio_tasks
     
     def _guardar_progreso(self, tasks: List[Dict], num_processed: int):
-        """Guarda progreso intermedio"""
+        """Guarda progreso intermedio (solo temporal)"""
         temp_file = self.config.OUTPUT_DIR / f"temp_progress_{num_processed}.json"
         with open(temp_file, 'w', encoding='utf-8') as f:
             json.dump(tasks, f, indent=2, ensure_ascii=False)
-        print(f"\n      💾 Progreso guardado: {num_processed} imágenes")
+        print(f"\n      💾 Progreso temporal guardado: {num_processed} imágenes")
+    
+    def _guardar_progreso_completo(self, tasks: List[Dict], nuevas_procesadas: set, num_processed: int):
+        """
+        Guarda progreso completo (registro + JSON) - resistente a interrupciones
+        """
+        print(f"\n      💾 Auto-guardando progreso ({num_processed} imágenes)...", end=" ")
+        
+        try:
+            # 1. Actualizar registro de procesadas
+            procesadas_hasta_ahora = self.processed_images.union(nuevas_procesadas)
+            self._guardar_registro_procesadas(procesadas_hasta_ahora)
+            
+            # 2. Guardar/actualizar JSON principal
+            output_file = self.config.OUTPUT_DIR / self.config.OUTPUT_JSON
+            
+            # Cargar tareas existentes si existen
+            existing_tasks = []
+            if output_file.exists():
+                try:
+                    with open(output_file, 'r', encoding='utf-8') as f:
+                        existing_tasks = json.load(f)
+                except:
+                    pass
+            
+            # Combinar con nuevas (evitar duplicados por image_id)
+            existing_ids = {t['meta']['image_id'] for t in existing_tasks if 'meta' in t and 'image_id' in t['meta']}
+            nuevas_tareas = [t for t in tasks if t['meta']['image_id'] not in existing_ids]
+            
+            all_tasks = existing_tasks + nuevas_tareas
+            
+            # Guardar
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(all_tasks, f, indent=2, ensure_ascii=False)
+            
+            print(f"✅ ({len(all_tasks)} total)")
+        
+        except Exception as e:
+            print(f"❌ Error: {e}")
     
     def guardar_dataset(self, tasks: List[Dict]):
-        """Guarda dataset final"""
+        """Guarda dataset final (modo incremental: append)"""
         output_file = self.config.OUTPUT_DIR / self.config.OUTPUT_JSON
+        
+        # En modo incremental, cargar tareas existentes
+        existing_tasks = []
+        if self.config.INCREMENTAL_MODE and output_file.exists():
+            try:
+                with open(output_file, 'r', encoding='utf-8') as f:
+                    existing_tasks = json.load(f)
+                print(f"📂 Cargadas {len(existing_tasks)} tareas existentes")
+            except Exception as e:
+                print(f"⚠️  No se pudieron cargar tareas existentes: {e}")
+        
+        # Combinar tareas
+        all_tasks = existing_tasks + tasks
         
         print(f"💾 Guardando dataset final...")
         with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(tasks, f, indent=2, ensure_ascii=False)
+            json.dump(all_tasks, f, indent=2, ensure_ascii=False)
         
         total_detections = sum(
             task['meta'].get('num_detections', 0) 
-            for task in tasks
+            for task in all_tasks
         )
         
         print(f"✅ Dataset guardado: {output_file}")
-        print(f"   📄 Total de tareas: {len(tasks)}")
+        print(f"   📄 Total de tareas: {len(all_tasks)}")
+        if self.config.INCREMENTAL_MODE and existing_tasks:
+            print(f"   🆕 Tareas nuevas agregadas: {len(tasks)}")
         print(f"   🔍 Total de detecciones: {total_detections}")
-        print(f"   📊 Promedio por imagen: {total_detections / len(tasks):.1f}")
+        if all_tasks:
+            print(f"   📊 Promedio por imagen: {total_detections / len(all_tasks):.1f}")
         
         return output_file
 

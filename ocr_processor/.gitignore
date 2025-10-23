@@ -1,0 +1,17 @@
+# ocr_processor/.gitignore
+
+# Credenciales
+oauth_credentials.json
+token.pickle
+.env
+Datos.env
+
+# Datos generados
+label_studio_data/
+temp_progress_*.json
+processed_images.json
+recibos_label_studio.json
+
+# Python
+__pycache__/
+*.pyc

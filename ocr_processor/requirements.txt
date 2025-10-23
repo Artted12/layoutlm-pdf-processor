@@ -1,0 +1,27 @@
+# Core OCR
+paddleocr==2.7.0.3
+paddlepaddle==2.6.0
+
+# Versiones específicas para compatibilidad
+numpy==1.24.4
+PyYAML==6.0.2
+PyMuPDF==1.20.2
+
+# OpenCV
+opencv-python==4.6.0.66
+opencv-contrib-python==4.6.0.66
+
+# Google Drive API
+google-auth-oauthlib==1.2.0
+google-api-python-client==2.108.0
+google-auth==2.25.2
+google-auth-httplib2==0.2.0
+
+# Utilidades
+python-dotenv==1.0.0
+Pillow>=10.0.0
+tqdm==4.67.1
+lxml==5.1.0
+
+# Opcional para Label Studio local
+# label-studio==1.10.0

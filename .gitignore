@@ -66,3 +66,17 @@ build/
 *.bak
 *.swp
 ~*
+
+# ============================================
+# OCR PROCESSOR - DATOS GENERADOS
+# ============================================
+label_studio_data/
+**/label_studio_data/
+temp_progress_*.json
+processed_images.json
+recibos_label_studio.json
+*.json
+!requirements.txt
+!package.json
+!**/credentials.json.example
+!**/Datos.env.example

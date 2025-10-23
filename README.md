@@ -109,8 +109,28 @@ layoutlm-pdf-processor/
 ├── oauth_credentials.json   # Credenciales OAuth (NO SUBIR)
 ├── token.pickle            # Token de sesión (NO SUBIR)
 ├── processed_cache.json    # Caché de procesados (NO SUBIR)
-└── logs_drive/             # Logs y estadísticas
+├── logs_drive/             # Logs y estadísticas
+├── ocr_processor/                     
+│   ├── README.md                      # README específico del OCR
+│   ├── .gitignore                     # .gitignore específico 
+│   ├── requirements.txt               # Dependencias del OCR
+│   ├── Create_LMv3_dataset_with_paddleOCR.py
+│   ├── verificar_progreso.py
+│   ├── Datos.env.example
+│   ├── oauth_credentials.json.example
+│   └── label_studio_data/            # Carpeta de salida
 ```
+
+### `/ocr_processor`
+Procesador automático de OCR con PaddleOCR para generar anotaciones en formato Label Studio.
+
+**Características:**
+- ✅ Procesamiento incremental de imágenes desde Google Drive
+- ✅ Auto-guardado resistente a interrupciones
+- ✅ Formato JSON compatible con Label Studio
+
+👉 [Ver documentación detallada](./ocr_processor/README.md)
+
 
 ## 🔐 Seguridad
 
